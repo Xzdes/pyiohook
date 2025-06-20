@@ -1,6 +1,6 @@
 {
   "name": "pyiohook",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "main": "index.js",
   "description": "Node.js + Python native keyboard hook for scanners/barcodes. Always English, any layout.",
   "author": "Xzdes",

@@ -9,7 +9,7 @@ A robust, native-like keyboard hook for Node.js on Windows. Guarantees English (
 *   **Detailed Modifier Status:** Every key event includes the status of `Shift`, `Ctrl`, and `Alt`, allowing for easy implementation of complex hotkeys.
 *   **State-Aware:** Correctly handles `CapsLock` and `NumLock` states.
 *   **Robust and Stable:** Designed to be stable and crash-proof, with proper error handling.
-*   **Simple Integration:** Emits clean JSON events to `stdout`, making it easy to integrate with any parent process.
+*   **PKG-Compatible:** Designed to be bundled into a standalone `.exe` using `pkg`, with a built-in mechanism to handle native binaries.
 
 ## Platform
 
@@ -45,12 +45,6 @@ const hook = startHook({
     if (event.key.toLowerCase() === 's' && event.modifiers.ctrl) {
       console.log('>>> Save Action Triggered! <<<');
     }
-
-    // Example: Stopping the hook with the ESC key
-    if (event.key === 'ESC') {
-      hook.stop();
-      console.log('Hook stopped by user.');
-    }
   },
 
   /**
@@ -61,42 +55,97 @@ const hook = startHook({
   }
 });
 
-// To stop the hook programmatically later:
-setTimeout(() => {
-  // Check if the hook is still running before stopping
-  if (hook) {
-    hook.stop();
-    console.log('Hook stopped by timeout.');
-  }
-}, 30000); // Stop after 30 seconds
+// To stop the hook programmatically:
+setTimeout(() => hook.stop(), 30000);
 ```
+
+## Building a Standalone Application (.exe) with `pkg`
+
+To distribute your application to users who don't have Node.js, you can bundle it into a single `.exe` file using `pkg`. `pyiohook` is fully compatible with this process, but requires specific configuration.
+
+Here is a complete guide based on creating a `logger-app` example.
+
+#### Step 1: Install `pkg`
+
+In your application's project folder, install `pkg` as a development dependency:
+```bash
+npm install --save-dev pkg
+```
+
+#### Step 2: Configure `package.json`
+
+You must tell `pkg` to include `pyiohook`'s native binary as an asset. Add a `"pkg"` and `"bin"` section to your `package.json`, and create a build script.
+
+```json
+{
+  "name": "my-awesome-app",
+  "version": "1.0.0",
+  "main": "app.js",
+  "dependencies": {
+    "pyiohook": "^1.4.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "bin": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "build": "npx pkg . --targets node18-win-x64 --output my-awesome-app.exe"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/pyiohook/bin/hook_server.exe"
+    ]
+  }
+}
+```
+
+#### Step 3: Write `pkg`-Compatible Code
+
+When working with files (like logs), your code must know whether it's running from a `node` script or a compiled `pkg` binary, as file paths will differ.
+
+**Problem:** `__dirname` points to a real folder during development, but to a *virtual* folder inside the `.exe` after compilation.
+**Solution:** Use `process.pkg` to detect the environment and choose the correct base directory.
+
+Here's an example from a logger application (`app.js`):
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+const { startHook } = require('pyiohook');
+
+// Detect if running inside a PKG binary
+const isPkg = typeof process.pkg !== 'undefined';
+
+// Choose the base directory correctly:
+// - In PKG: the directory of the .exe file.
+// - In Node: the directory of the script (__dirname).
+const baseDir = isPkg ? path.dirname(process.execPath) : __dirname;
+
+const LOG_FILE = path.join(baseDir, 'my-log-file.txt');
+
+// ... your application logic ...
+```
+
+#### Step 4: Build the Application
+
+Run the build script you created:
+```bash
+npm run build
+```
+This will create `my-awesome-app.exe` in your project folder, ready for distribution. `pyiohook` will automatically handle extracting and running its native binary from a temporary location.
 
 ## For Developers: Rebuilding `hook_server.exe`
 
-If you want to modify the Python script (`hook_server.py`), you will need to recompile the executable.
+If you modify `pyiohook`'s internal Python script, you must recompile its `.exe`.
 
-#### 1. Requirements
-
-*   Python 3.7+
-*   The following Python packages:
+1.  **Requirements:** `pip install pyinstaller pynput`
+2.  **Build Command (Recommended):**
     ```bash
-    pip install pyinstaller pynput
+    pyinstaller --onefile --hidden-import=pynput.keyboard._win32 --hidden-import=pynput.keyboard._base hook_server.py
     ```
-
-#### 2. Build Command
-
-This is the **recommended** command to build the `.exe`. It creates a console application, which is less likely to be flagged as a virus by security software.
-
-```bash
-pyinstaller --onefile --hidden-import=pynput.keyboard._win32 --hidden-import=pynput.keyboard._base hook_server.py
-```
-
-*   **Note:** When a Node.js application runs this `.exe`, a console window may flash for a fraction of a second. This is normal and is the trade-off for better antivirus compatibility.
-
-#### 3. Copy the File
-
-After a successful build, copy the resulting executable from `dist/hook_server.exe` to the `pyiohook/bin/` directory, replacing the old one.
+3.  **Copy:** Move the new `dist/hook_server.exe` to the `pyiohook/bin/` directory.
 
 ## How It Works
 
-This module works by spawning a small, self-contained Python executable (`hook_server.exe`) as a child process. This native process uses `pynput` and the `WinAPI` to establish a low-level keyboard hook. It captures key events before they are translated by the OS language layout, formats them into JSON, and prints them to its standard output. The Node.js wrapper reads this output line by line, parses the JSON, and emits the events to your `onKey` callback.
+This module spawns a self-contained Python executable (`hook_server.exe`) which uses `WinAPI` to establish a low-level keyboard hook. It captures key events, formats them into JSON, and prints them to `stdout`. The Node.js wrapper reads this output and emits events. When bundled with `pkg`, the module is smart enough to extract the Python `.exe` to a temporary location on the user's machine before running it, ensuring compatibility.
